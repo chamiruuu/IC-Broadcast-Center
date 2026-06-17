@@ -11,11 +11,13 @@ type AdminPayload = {
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Max-Age": "86400",
 };
 
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
+    return new Response(null, { status: 204, headers: corsHeaders });
   }
 
   try {
@@ -33,11 +35,9 @@ Deno.serve(async (request) => {
     }
 
     const adminClient = createClient(supabaseUrl, serviceRoleKey);
-    const callerClient = createClient(supabaseUrl, serviceRoleKey, {
-      global: { headers: { Authorization: authHeader } },
-    });
+    const jwt = authHeader.replace(/^Bearer\s+/i, "");
 
-    const { data: callerData, error: callerError } = await callerClient.auth.getUser();
+    const { data: callerData, error: callerError } = await adminClient.auth.getUser(jwt);
     if (callerError || !callerData.user) {
       throw new Error("Invalid session.");
     }
@@ -87,6 +87,7 @@ Deno.serve(async (request) => {
       });
 
       if (profileInsertError) {
+        await adminClient.auth.admin.deleteUser(createdUser.user.id);
         throw profileInsertError;
       }
 

@@ -24,6 +24,7 @@ const emptyEditor = {
   message: "",
   skypebot_group_ids: [],
   status: "draft",
+  original_status: "draft",
   published_at: null,
   published_by: null,
 };
@@ -34,6 +35,23 @@ function canEdit(profile) {
 
 function canManageUsers(profile) {
   return profile?.role === "admin";
+}
+
+async function functionErrorMessage(error) {
+  if (!error) {
+    return "";
+  }
+
+  if (error.context?.json) {
+    try {
+      const body = await error.context.json();
+      return body?.error || error.message;
+    } catch {
+      return error.message;
+    }
+  }
+
+  return error.message || "Function request failed.";
 }
 
 function joinNames(groups, ids = []) {
@@ -249,6 +267,7 @@ function AnnouncementList({
   onComplete,
   onEdit,
   onPublish,
+  onView,
   query,
   setQuery,
   profile,
@@ -284,7 +303,8 @@ function AnnouncementList({
               <div className="card-topline">
                 <span className="broadcast-id">{announcement.broadcast_id}</span>
                 <div className="card-actions">
-                  {canEdit(profile) ? (
+                  <button onClick={() => onView(announcement)}>View</button>
+                  {canEdit(profile) && announcement.status !== "completed" ? (
                     <IconButton label="Edit broadcast" onClick={() => onEdit(announcement)}>
                       <Icon name="edit" />
                     </IconButton>
@@ -397,10 +417,84 @@ function CompleteButton({ csNames, onComplete }) {
   );
 }
 
+function AnnouncementDetail({ announcement, groups, profiles, versions, completionLogs, onClose, onCopy }) {
+  const profileMap = new Map(profiles.map((item) => [item.id, item]));
+  const relatedVersions = versions
+    .filter((item) => item.announcement_id === announcement.id)
+    .sort((a, b) => new Date(b.changed_at) - new Date(a.changed_at));
+  const relatedCompletions = completionLogs
+    .filter((item) => item.announcement_id === announcement.id)
+    .sort((a, b) => new Date(b.completed_at) - new Date(a.completed_at));
+  const skypebotHtml = toSkypebotHtml(announcement.message);
+  const plainText = toBo82PlainText(announcement.message);
+
+  return (
+    <Modal title={announcement.broadcast_id} eyebrow={statusLabel(announcement.status)} className="detail-modal" onClose={onClose}>
+      <div className="detail-layout">
+        <section className="detail-main">
+          <h3>{announcement.title}</h3>
+          <div className="detail-preview" dangerouslySetInnerHTML={{ __html: skypebotHtml }} />
+          <div className="copy-row">
+            <button className="copy-action" onClick={() => onCopy(skypebotHtml, "Skypebot HTML")}>
+              <Icon name="copy" />
+              Skypebot
+            </button>
+            <button className="copy-action" onClick={() => onCopy(plainText, "BO8.2 Plain Text")}>
+              <Icon name="copy" />
+              BO8.2
+            </button>
+          </div>
+        </section>
+
+        <aside className="detail-side">
+          <dl className="detail-meta">
+            <div>
+              <dt>Skypebot Group</dt>
+              <dd>{joinNames(groups, announcement.skypebot_group_ids) || "Not selected"}</dd>
+            </div>
+            <div>
+              <dt>Published</dt>
+              <dd>{formatDateTime(announcement.published_at)}</dd>
+            </div>
+            <div>
+              <dt>Published by</dt>
+              <dd>{profileMap.get(announcement.published_by)?.name || profileMap.get(announcement.updated_by)?.name || "-"}</dd>
+            </div>
+            {announcement.completed_at ? (
+              <div>
+                <dt>Completed</dt>
+                <dd>{announcement.completed_by_name} - {formatDateTime(announcement.completed_at)}</dd>
+              </div>
+            ) : null}
+          </dl>
+
+          <div className="history-block">
+            <h4>Completion</h4>
+            {relatedCompletions.length ? relatedCompletions.map((item) => (
+              <p key={item.id}>{item.completed_by_name} completed at {formatDateTime(item.completed_at)}</p>
+            )) : <p>No completion log yet.</p>}
+          </div>
+
+          <div className="history-block">
+            <h4>Version History</h4>
+            {relatedVersions.length ? relatedVersions.map((item) => (
+              <div className="history-item" key={item.id}>
+                <strong>{item.change_type.replace("_", " ")}</strong>
+                <span>{statusLabel(item.status)} by {profileMap.get(item.changed_by)?.name || "-"} at {formatDateTime(item.changed_at)}</span>
+              </div>
+            )) : <p>No version history yet.</p>}
+          </div>
+        </aside>
+      </div>
+    </Modal>
+  );
+}
+
 function Editor({ editor, setEditor, groups, onSave, saving }) {
   const messageRef = useRef(null);
   const [previewModal, setPreviewModal] = useState(null);
   const [linkDialog, setLinkDialog] = useState(null);
+  const [confirmPublish, setConfirmPublish] = useState(false);
   const skypebotHtml = toSkypebotHtml(editor.message);
   const plainText = toBo82PlainText(editor.message);
   const selectedStatus = editor.status === "published" ? "published" : "draft";
@@ -467,6 +561,15 @@ function Editor({ editor, setEditor, groups, onSave, saving }) {
     });
   }
 
+  function requestSave() {
+    if (selectedStatus === "published" && editor.original_status !== "published") {
+      setConfirmPublish(true);
+      return;
+    }
+
+    onSave(selectedStatus);
+  }
+
   return (
     <section className="panel compose-panel">
       <div className="section-header">
@@ -491,7 +594,7 @@ function Editor({ editor, setEditor, groups, onSave, saving }) {
               Published
             </button>
           </div>
-          <button className="primary" disabled={saving} onClick={() => onSave(selectedStatus)}>
+          <button className="primary" disabled={saving} onClick={requestSave}>
             {saving ? "Saving..." : "Save broadcast"}
           </button>
         </div>
@@ -624,6 +727,28 @@ function Editor({ editor, setEditor, groups, onSave, saving }) {
               <button className="primary">Insert link</button>
             </div>
           </form>
+        </Modal>
+      ) : null}
+
+      {confirmPublish ? (
+        <Modal title="Publish broadcast?" eyebrow="Confirmation" onClose={() => setConfirmPublish(false)}>
+          <div className="modal-form">
+            <p className="muted">
+              Publishing makes this broadcast visible to CS users immediately.
+            </p>
+            <div className="action-row">
+              <button onClick={() => setConfirmPublish(false)}>Keep draft</button>
+              <button
+                className="primary"
+                onClick={() => {
+                  setConfirmPublish(false);
+                  onSave("published");
+                }}
+              >
+                Publish now
+              </button>
+            </div>
+          </div>
         </Modal>
       ) : null}
     </section>
@@ -777,7 +902,7 @@ function UserAdmin({ profiles, reload }) {
     setBusy(false);
 
     if (error) {
-      alert(error.message);
+      alert(await functionErrorMessage(error));
       return;
     }
 
@@ -792,7 +917,7 @@ function UserAdmin({ profiles, reload }) {
     });
 
     if (error) {
-      alert(error.message);
+      alert(await functionErrorMessage(error));
       return;
     }
 
@@ -887,9 +1012,12 @@ export default function App() {
   const [csNames, setCsNames] = useState([]);
   const [groups, setGroups] = useState([]);
   const [profiles, setProfiles] = useState([]);
+  const [versions, setVersions] = useState([]);
+  const [completionLogs, setCompletionLogs] = useState([]);
   const [query, setQuery] = useState("");
   const [toast, setToast] = useState("");
   const [editor, setEditor] = useState(emptyEditor);
+  const [selectedAnnouncement, setSelectedAnnouncement] = useState(null);
   const [saving, setSaving] = useState(false);
 
   const activeAnnouncements = useMemo(
@@ -959,6 +1087,25 @@ export default function App() {
     }
   }, [profile]);
 
+  useEffect(() => {
+    if (!profile) {
+      return undefined;
+    }
+
+    const channel = supabase
+      .channel("ic-broadcast-center-realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "announcements" },
+        () => reloadAll(),
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [profile]);
+
   async function loadProfile() {
     const { data, error } = await supabase
       .from("profiles")
@@ -1007,6 +1154,19 @@ export default function App() {
     if (canEdit(profile)) {
       const { data } = await supabase.from("profiles").select("*").order("created_at", { ascending: false });
       setProfiles(data ?? []);
+
+      const [versionsResult, completionsResult] = await Promise.all([
+        supabase.from("announcement_versions").select("*").order("changed_at", { ascending: false }),
+        supabase.from("completion_logs").select("*").order("completed_at", { ascending: false }),
+      ]);
+
+      if (!versionsResult.error) {
+        setVersions(versionsResult.data ?? []);
+      }
+
+      if (!completionsResult.error) {
+        setCompletionLogs(completionsResult.data ?? []);
+      }
     }
   }
 
@@ -1021,37 +1181,46 @@ export default function App() {
       return;
     }
 
-    setSaving(true);
-    const now = new Date().toISOString();
-    const patch = {
-      title: editor.title.trim(),
-      message: editor.message,
-      skypebot_group_ids: editor.skypebot_group_ids,
-      status,
-      updated_by: profile.id,
-      published_at: status === "draft" ? null : editor.published_at ?? now,
-      published_by: status === "draft" ? null : editor.published_by ?? profile.id,
-    };
-
-    const result = editor.id
-      ? await supabase.from("announcements").update(patch).eq("id", editor.id)
-      : await supabase.from("announcements").insert({
-          ...patch,
-          broadcast_id: await createUniqueBroadcastId(supabase),
-          created_by: profile.id,
-        });
-
-    setSaving(false);
-
-    if (result.error) {
-      setToast(result.error.message);
+    if (editor.original_status === "completed") {
+      setToast("Completed broadcasts cannot be edited. Reopen flow is not enabled yet.");
       return;
     }
 
-    setEditor(emptyEditor);
-    setTab(status === "draft" ? "drafts" : "active");
-    setToast(status === "draft" ? "Draft saved." : "Broadcast published.");
-    await reloadAll();
+    setSaving(true);
+    try {
+      const now = new Date().toISOString();
+      const patch = {
+        title: editor.title.trim(),
+        message: editor.message,
+        skypebot_group_ids: editor.skypebot_group_ids,
+        status,
+        updated_by: profile.id,
+        published_at: status === "draft" ? null : editor.published_at ?? now,
+        published_by: status === "draft" ? null : editor.published_by ?? profile.id,
+      };
+
+      const result = editor.id
+        ? await supabase.from("announcements").update(patch).eq("id", editor.id)
+        : await supabase.from("announcements").insert({
+            ...patch,
+            broadcast_id: await createUniqueBroadcastId(supabase),
+            created_by: profile.id,
+          });
+
+      if (result.error) {
+        setToast(result.error.message);
+        return;
+      }
+
+      setEditor(emptyEditor);
+      setTab(status === "draft" ? "drafts" : "active");
+      setToast(status === "draft" ? "Draft saved." : "Broadcast published.");
+      await reloadAll();
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "Could not save broadcast.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function handlePublish(announcement) {
@@ -1096,6 +1265,7 @@ export default function App() {
       message: announcement.message,
       skypebot_group_ids: announcement.skypebot_group_ids ?? [],
       status: announcement.status,
+      original_status: announcement.status,
       published_at: announcement.published_at,
       published_by: announcement.published_by,
     });
@@ -1140,6 +1310,7 @@ export default function App() {
           onComplete={handleComplete}
           onEdit={editAnnouncement}
           onPublish={handlePublish}
+          onView={setSelectedAnnouncement}
           query={query}
           setQuery={setQuery}
           profile={profile}
@@ -1157,6 +1328,7 @@ export default function App() {
           onComplete={handleComplete}
           onEdit={editAnnouncement}
           onPublish={handlePublish}
+          onView={setSelectedAnnouncement}
           query={query}
           setQuery={setQuery}
           profile={profile}
@@ -1174,6 +1346,7 @@ export default function App() {
           onComplete={handleComplete}
           onEdit={editAnnouncement}
           onPublish={handlePublish}
+          onView={setSelectedAnnouncement}
           query={query}
           setQuery={setQuery}
           profile={profile}
@@ -1215,6 +1388,18 @@ export default function App() {
 
       {tab === "users" && canManageUsers(profile) ? (
         <UserAdmin profiles={profiles} reload={reloadAll} />
+      ) : null}
+
+      {selectedAnnouncement ? (
+        <AnnouncementDetail
+          announcement={announcements.find((item) => item.id === selectedAnnouncement.id) ?? selectedAnnouncement}
+          groups={groups}
+          profiles={profiles}
+          versions={versions}
+          completionLogs={completionLogs}
+          onClose={() => setSelectedAnnouncement(null)}
+          onCopy={handleCopy}
+        />
       ) : null}
     </AppShell>
   );

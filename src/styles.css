@@ -1253,6 +1253,85 @@ textarea {
   word-break: break-word;
 }
 
+.detail-modal {
+  max-height: 88vh;
+  max-width: min(1040px, calc(100vw - 40px));
+}
+
+.detail-layout {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
+  min-height: 0;
+}
+
+.detail-main,
+.detail-side {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.detail-main h3 {
+  margin: 0;
+}
+
+.detail-preview {
+  background: #f8fafc;
+  border: 1px solid #e1e8f2;
+  border-radius: 12px;
+  max-height: 52vh;
+  overflow: auto;
+  padding: 16px;
+  word-break: break-word;
+}
+
+.detail-preview a {
+  color: #1d5dc8;
+  font-weight: 700;
+}
+
+.detail-meta {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.detail-meta dt {
+  color: #6b778b;
+  font-size: 0.68rem;
+  font-weight: 850;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.detail-meta dd {
+  margin: 3px 0 0;
+}
+
+.history-block {
+  border-top: 1px solid #e9eef6;
+  display: grid;
+  gap: 8px;
+  padding-top: 12px;
+}
+
+.history-block h4,
+.history-block p {
+  margin: 0;
+}
+
+.history-block p,
+.history-item span {
+  color: #6a768a;
+  font-size: 0.88rem;
+}
+
+.history-item {
+  display: grid;
+  gap: 2px;
+}
+
 .output-modal {
   max-height: 84vh;
   max-width: min(860px, calc(100vw - 40px));
@@ -1274,5 +1353,9 @@ textarea {
   .output-modal .modal-header {
     min-width: 0;
     width: 100%;
+  }
+
+  .detail-layout {
+    grid-template-columns: 1fr;
   }
 }
