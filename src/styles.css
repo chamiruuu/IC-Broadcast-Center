@@ -1208,6 +1208,122 @@ textarea {
   }
 }
 
+/* --- MODERN TIPTAP TOOLBAR --- */
+.modern-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  background: #f8fafc;
+  border: 1px solid #d9e0ec;
+  border-bottom: none;
+  border-radius: 10px 10px 0 0;
+  padding: 8px 12px;
+  align-items: center;
+}
+
+.toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-right: 1px solid #cbd5e1;
+  padding-right: 12px;
+}
+
+.toolbar-group:last-child {
+  border-right: none;
+}
+
+.toolbar-select {
+  padding: 4px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 13px;
+  background: white;
+  cursor: pointer;
+}
+
+.modern-toolbar button {
+  background: transparent;
+  border: none;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  color: #475569;
+  transition: all 0.2s;
+}
+
+.modern-toolbar button:hover {
+  background: #e2e8f0;
+}
+
+.modern-toolbar button.active {
+  background: #cbf4c9;
+  color: #166534;
+  font-weight: 600;
+}
+
+.color-picker {
+  -webkit-appearance: none;
+  border: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0;
+}
+
+/* Ensure the editor snaps to the bottom of the new toolbar */
+.message-field > div:last-child {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+}
+
+.tiptap-editor {
+  display: block;
+  flex: 1;
+  overflow-y: auto;
+  min-height: 350px;
+  background: #ffffff;
+  border: 1px solid #d9e0ec;
+  border-radius: 0 0 10px 10px;
+  padding: 16px;
+  outline: none;
+}
+
+/* TipTap Table Styles */
+.tiptap-editor table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+.tiptap-editor td,
+.tiptap-editor th {
+  min-width: 1em;
+  border: 1px solid #cbd5e1;
+  padding: 6px 8px;
+  vertical-align: top;
+  box-sizing: border-box;
+  position: relative;
+}
+
+.tiptap-editor th {
+  background-color: #f1f5f9;
+  font-weight: bold;
+  text-align: left;
+}
+
+.tiptap-editor hr {
+  border: none;
+  border-top: 2px solid #cbd5e1;
+  margin: 1.5rem 0;
+}
+
 .preview-header {
   align-items: center;
   display: flex;

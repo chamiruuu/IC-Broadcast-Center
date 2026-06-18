@@ -23,9 +23,10 @@ Deno.serve(async (request) => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
     const appUrl = Deno.env.get("APP_URL") ?? "http://localhost:5173";
 
-    if (!supabaseUrl || !serviceRoleKey) {
+    if (!supabaseUrl || !serviceRoleKey || !anonKey) {
       throw new Error("Missing Supabase Edge Function environment variables.");
     }
 
@@ -34,23 +35,40 @@ Deno.serve(async (request) => {
       throw new Error("Missing authorization header.");
     }
 
-    const adminClient = createClient(supabaseUrl, serviceRoleKey);
-    const jwt = authHeader.replace(/^Bearer\s+/i, "");
+    // 1. Authenticate the caller using their own JWT to preserve RLS context
+    const userClient = createClient(supabaseUrl, anonKey, {
+      global: { headers: { Authorization: authHeader } },
+    });
 
-    const { data: callerData, error: callerError } = await adminClient.auth.getUser(jwt);
+    const { data: callerData, error: callerError } = await userClient.auth.getUser();
     if (callerError || !callerData.user) {
-      throw new Error("Invalid session.");
+      throw new Error(`Invalid session: ${callerError?.message || 'Token verification failed'}`);
     }
 
-    const { data: callerProfile, error: profileError } = await adminClient
+    // 2. Fetch the profile using the user's client
+    const { data: callerProfile, error: profileError } = await userClient
       .from("profiles")
       .select("role, active")
       .eq("id", callerData.user.id)
       .single();
 
-    if (profileError || callerProfile?.role !== "admin" || !callerProfile.active) {
-      throw new Error("Only active admins can manage user accounts.");
+    // If the database fails, tell us EXACTLY why instead of hiding it
+    if (profileError) {
+      throw new Error(`Database Error (Profile Fetch): ${profileError.message}`);
     }
+
+    // Now we can safely check the admin status
+    if (callerProfile?.role !== "admin" || !callerProfile.active) {
+      throw new Error(`Unauthorized: Caller role is '${callerProfile?.role}', active state is ${callerProfile?.active}.`);
+    }
+
+    // 3. Create the admin client ONLY for elevated Auth API operations
+    const adminClient = createClient(supabaseUrl, serviceRoleKey, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+      }
+    });
 
     const payload = (await request.json()) as AdminPayload;
     const email = payload.email?.trim().toLowerCase();
@@ -87,8 +105,9 @@ Deno.serve(async (request) => {
       });
 
       if (profileInsertError) {
+        // Rollback the auth user creation if profile insert fails
         await adminClient.auth.admin.deleteUser(createdUser.user.id);
-        throw profileInsertError;
+        throw new Error(`Database Error (Profile Insert): ${profileInsertError.message}`);
       }
 
       return json({ ok: true, userId: createdUser.user.id });
@@ -100,7 +119,7 @@ Deno.serve(async (request) => {
       });
 
       if (resetError) {
-        throw resetError;
+        throw new Error(`Reset password error: ${resetError.message}`);
       }
 
       return json({ ok: true });
@@ -108,6 +127,7 @@ Deno.serve(async (request) => {
 
     throw new Error("Unsupported admin action.");
   } catch (error) {
+    // Send the real, un-swallowed error message back to the frontend alert
     return json({ error: error instanceof Error ? error.message : "Unexpected error." }, 400);
   }
 });

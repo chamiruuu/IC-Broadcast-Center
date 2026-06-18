@@ -2,14 +2,18 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createUniqueBroadcastId } from "./lib/broadcastId";
 import {
   formatDateTime,
-  insertFormatting,
-  insertLinkFormatting,
   statusLabel,
-  stripFormatting,
   toBo82PlainText,
   toSkypebotHtml,
 } from "./lib/formatters";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
+import { EditorContent, useEditor } from "@tiptap/react";
+import StarterKit from "@tiptap/starter-kit";
+import Link from "@tiptap/extension-link";
+import { TextStyle } from "@tiptap/extension-text-style";
+import Color from "@tiptap/extension-color";
+import FontFamily from "@tiptap/extension-font-family";
+import Highlight from "@tiptap/extension-highlight";
 
 const editableRoles = ["admin", "leader"];
 const roleLabels = {
@@ -314,7 +318,12 @@ function AnnouncementList({
               </div>
 
               <h3>{announcement.title}</h3>
-              <p className="message-preview">{announcement.message}</p>
+              <div className="message-preview">
+                <div
+                  className="render-preview"
+                  dangerouslySetInnerHTML={{ __html: announcement.message }}
+                />
+              </div>
 
               <dl className="meta-grid">
                 <div>
@@ -491,13 +500,50 @@ function AnnouncementDetail({ announcement, groups, profiles, versions, completi
 }
 
 function Editor({ editor, setEditor, groups, onSave, saving }) {
-  const messageRef = useRef(null);
-  const [previewModal, setPreviewModal] = useState(null);
   const [linkDialog, setLinkDialog] = useState(null);
+  const [previewModal, setPreviewModal] = useState(null);
   const [confirmPublish, setConfirmPublish] = useState(false);
+
+  const selectedStatus = editor.status === "published" ? "published" : "draft";
+
+  const tiptapEditor = useEditor({
+    extensions: [
+      StarterKit,
+      Link.configure({ openOnClick: false }),
+      TextStyle,
+      Color,
+      FontFamily,
+      Highlight.configure({ multicolor: true }),
+    ],
+    content: editor.message,
+    editorProps: {
+      attributes: {
+        class: "tiptap-editor",
+      },
+    },
+    onUpdate: ({ editor: e }) => {
+      setEditor({ ...editor, message: e.getHTML() });
+    },
+  });
+
   const skypebotHtml = toSkypebotHtml(editor.message);
   const plainText = toBo82PlainText(editor.message);
-  const selectedStatus = editor.status === "published" ? "published" : "draft";
+
+  useEffect(() => {
+    if (!tiptapEditor) {
+      return;
+    }
+
+    if (!editor.message && tiptapEditor.isEmpty) {
+      return;
+    }
+
+    if (editor.message && tiptapEditor.getHTML() === editor.message) {
+      return;
+    }
+
+    tiptapEditor.commands.setContent(editor.message || "", false);
+  }, [editor.message, tiptapEditor]);
 
   function toggleGroup(id) {
     const exists = editor.skypebot_group_ids.includes(id);
@@ -509,56 +555,14 @@ function Editor({ editor, setEditor, groups, onSave, saving }) {
     });
   }
 
-  function applyMessageFormat(type) {
-    if (type === "clear") {
-      setEditor({ ...editor, message: stripFormatting(editor.message) });
-      requestAnimationFrame(() => messageRef.current?.focus());
-      return;
-    }
-
-    const textarea = messageRef.current;
-    const selectionStart = textarea?.selectionStart ?? editor.message.length;
-    const selectionEnd = textarea?.selectionEnd ?? editor.message.length;
-
-    if (type === "link") {
-      setLinkDialog({
-        selectionStart,
-        selectionEnd,
-        label: editor.message.slice(selectionStart, selectionEnd),
-        url: "https://",
-      });
-      return;
-    }
-
-    const result = insertFormatting(editor.message, selectionStart, selectionEnd, type);
-
-    setEditor({ ...editor, message: result.value });
-    requestAnimationFrame(() => {
-      messageRef.current?.focus();
-      messageRef.current?.setSelectionRange(result.cursor, result.cursor);
-    });
-  }
-
   function applyLink(event) {
     event.preventDefault();
     if (!linkDialog?.url || linkDialog.url === "https://") {
       return;
     }
 
-    const result = insertLinkFormatting(
-      editor.message,
-      linkDialog.selectionStart,
-      linkDialog.selectionEnd,
-      linkDialog.label,
-      linkDialog.url,
-    );
-
-    setEditor({ ...editor, message: result.value });
+    tiptapEditor.chain().focus().setLink({ href: linkDialog.url }).run();
     setLinkDialog(null);
-    requestAnimationFrame(() => {
-      messageRef.current?.focus();
-      messageRef.current?.setSelectionRange(result.cursor, result.cursor);
-    });
   }
 
   function requestSave() {
@@ -570,6 +574,10 @@ function Editor({ editor, setEditor, groups, onSave, saving }) {
     onSave(selectedStatus);
   }
 
+  if (!tiptapEditor) {
+    return null;
+  }
+
   return (
     <section className="panel compose-panel">
       <div className="section-header">
@@ -577,23 +585,11 @@ function Editor({ editor, setEditor, groups, onSave, saving }) {
           <p className="eyebrow">{editor.id ? "Edit broadcast" : "New broadcast"}</p>
           <h2>Compose announcement</h2>
         </div>
-        <div className="compose-actions">
-          <div className="status-switch" aria-label="Broadcast status">
-            <button
-              className={selectedStatus === "draft" ? "selected" : ""}
-              onClick={() => setEditor({ ...editor, status: "draft" })}
-              type="button"
-            >
-              Draft
-            </button>
-            <button
-              className={selectedStatus === "published" ? "selected" : ""}
-              onClick={() => setEditor({ ...editor, status: "published" })}
-              type="button"
-            >
-              Published
-            </button>
-          </div>
+          <div className="compose-actions">
+            <div className="status-switch" aria-label="Broadcast status">
+              <button className={selectedStatus === "draft" ? "selected" : ""} onClick={() => setEditor({ ...editor, status: "draft" })} type="button">Draft</button>
+              <button className={selectedStatus === "published" ? "selected" : ""} onClick={() => setEditor({ ...editor, status: "published" })} type="button">Published</button>
+            </div>
           <button className="primary" disabled={saving} onClick={requestSave}>
             {saving ? "Saving..." : "Save broadcast"}
           </button>
@@ -604,44 +600,50 @@ function Editor({ editor, setEditor, groups, onSave, saving }) {
         <form className="editor-form" onSubmit={(event) => event.preventDefault()}>
           <label>
             Title
-            <input
-              value={editor.title}
-              onChange={(event) => setEditor({ ...editor, title: event.target.value })}
-              placeholder="Short internal title"
-            />
+            <input value={editor.title} onChange={(event) => setEditor({ ...editor, title: event.target.value })} placeholder="Short internal title" />
           </label>
 
           <div className="message-field">
-            <div className="message-toolbar">
-              <span className="field-label">Message</span>
-              <div className="format-actions" aria-label="Message formatting">
-                <button type="button" onClick={() => applyMessageFormat("bold")} title="Bold selected text">
-                  <strong>B</strong>
-                </button>
-                <button type="button" onClick={() => applyMessageFormat("italic")} title="Italic selected text">
-                  <em>I</em>
-                </button>
-                <button type="button" onClick={() => applyMessageFormat("link")} title="Add link">
-                  Link
-                </button>
-                <button type="button" onClick={() => applyMessageFormat("bullet")} title="Bullet list">
-                  Bullet
-                </button>
-                <button type="button" onClick={() => applyMessageFormat("numbered")} title="Numbered list">
-                  Numbered
-                </button>
-                <button type="button" onClick={() => applyMessageFormat("clear")} title="Clear formatting">
-                  Clear
-                </button>
+            <span className="field-label">Message</span>
+
+            <div className="modern-toolbar">
+              <div className="toolbar-group">
+                <select onChange={(e) => tiptapEditor.chain().focus().setFontFamily(e.target.value).run()} className="toolbar-select" value={tiptapEditor.getAttributes("textStyle").fontFamily || ""}>
+                  <option value="">Default Font</option>
+                  <option value="Arial">Arial</option>
+                  <option value="Courier New">Courier New</option>
+                  <option value="Georgia">Georgia</option>
+                  <option value="Times New Roman">Times</option>
+                  <option value="Verdana">Verdana</option>
+                </select>
+
+                <select onChange={(e) => tiptapEditor.chain().focus().toggleHeading({ level: parseInt(e.target.value) }).run()} className="toolbar-select">
+                  <option value="0">Normal Text</option>
+                  <option value="1">Heading 1</option>
+                  <option value="2">Heading 2</option>
+                  <option value="3">Heading 3</option>
+                </select>
+              </div>
+
+              <div className="toolbar-group">
+                <button type="button" onClick={() => tiptapEditor.chain().focus().toggleBold().run()} className={tiptapEditor.isActive("bold") ? "active" : ""}><b>B</b></button>
+                <button type="button" onClick={() => tiptapEditor.chain().focus().toggleItalic().run()} className={tiptapEditor.isActive("italic") ? "active" : ""}><i>I</i></button>
+                <button type="button" onClick={() => tiptapEditor.chain().focus().toggleStrike().run()} className={tiptapEditor.isActive("strike") ? "active" : ""}><s>S</s></button>
+
+                <input type="color" onInput={(event) => tiptapEditor.chain().focus().setColor(event.target.value).run()} value={tiptapEditor.getAttributes("textStyle").color || "#000000"} className="color-picker" title="Text Color" />
+
+                <button type="button" onClick={() => tiptapEditor.chain().focus().toggleHighlight({ color: "#fffbeb" }).run()} className={tiptapEditor.isActive("highlight") ? "active" : ""} title="Highlight">A</button>
+              </div>
+
+              <div className="toolbar-group">
+                <button type="button" onClick={() => tiptapEditor.chain().focus().toggleBulletList().run()} className={tiptapEditor.isActive("bulletList") ? "active" : ""}>• List</button>
+                <button type="button" onClick={() => tiptapEditor.chain().focus().toggleOrderedList().run()} className={tiptapEditor.isActive("orderedList") ? "active" : ""}>1. List</button>
+                <button type="button" onClick={() => setLinkDialog({ url: "https://" })} className={tiptapEditor.isActive("link") ? "active" : ""}>Link</button>
+                <button type="button" onClick={() => tiptapEditor.chain().focus().setHorizontalRule().run()}>Divider</button>
               </div>
             </div>
-            <textarea
-              ref={messageRef}
-              value={editor.message}
-              onChange={(event) => setEditor({ ...editor, message: event.target.value })}
-              placeholder="Write the announcement exactly as CS should send it."
-              rows={12}
-            />
+
+            <EditorContent editor={tiptapEditor} />
           </div>
 
           <div>
@@ -660,9 +662,6 @@ function Editor({ editor, setEditor, groups, onSave, saving }) {
             </div>
           </div>
 
-          <p className="compose-hint">
-            Choose Draft while preparing. Switch to Published when CS should see and send it.
-          </p>
         </form>
 
         <aside className="preview-pane">
@@ -700,35 +699,14 @@ function Editor({ editor, setEditor, groups, onSave, saving }) {
         </Modal>
       ) : null}
 
-      {linkDialog ? (
+      {linkDialog && (
         <Modal title="Add link" eyebrow="Message formatting" onClose={() => setLinkDialog(null)}>
           <form className="modal-form" onSubmit={applyLink}>
-            <label>
-              Link text
-              <input
-                value={linkDialog.label}
-                onChange={(event) => setLinkDialog({ ...linkDialog, label: event.target.value })}
-                placeholder="Text to show"
-                autoFocus
-              />
-            </label>
-            <label>
-              URL
-              <input
-                value={linkDialog.url}
-                onChange={(event) => setLinkDialog({ ...linkDialog, url: event.target.value })}
-                placeholder="https://example.com"
-                type="url"
-                required
-              />
-            </label>
-            <div className="action-row">
-              <button type="button" onClick={() => setLinkDialog(null)}>Cancel</button>
-              <button className="primary">Insert link</button>
-            </div>
+            <label>URL <input value={linkDialog.url} onChange={(e) => setLinkDialog({ ...linkDialog, url: e.target.value })} type="url" required autoFocus /></label>
+            <div className="action-row"><button type="button" onClick={() => setLinkDialog(null)}>Cancel</button><button className="primary">Insert</button></div>
           </form>
         </Modal>
-      ) : null}
+      )}
 
       {confirmPublish ? (
         <Modal title="Publish broadcast?" eyebrow="Confirmation" onClose={() => setConfirmPublish(false)}>

@@ -1,5 +1,6 @@
-const urlPattern = /(https?:\/\/[^\s<>"')]+)/g;
-const markdownLinkPattern = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g;
+function normalizeWhitespace(value) {
+  return value.replace(/\r\n?/g, "\n");
+}
 
 function escapeHtml(value) {
   return value
@@ -10,47 +11,85 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
-function autoLink(value) {
-  return value.replace(urlPattern, (url) => {
-    const safeUrl = escapeHtml(url);
-    return `<a href="${safeUrl}">${safeUrl}</a>`;
-  });
+function extractPlainTextFromHtml(htmlMessage) {
+  return normalizeWhitespace(htmlMessage)
+    .replace(/<li>\s*<p>/g, "<li>")
+    .replace(/<\/p>\s*<\/li>/g, "</li>")
+    .replace(/<ul>|<ol>|<\/ul>|<\/ol>/g, "")
+    .replace(/<\s*hr\s*\/??\s*>/gi, "\n———————————————————————————————\n")
+    .replace(/<\s*li\b[^>]*>/gi, "- ")
+    .replace(/<\s*br\s*\/?\s*>/gi, "\n")
+    .replace(/<\s*\/p\s*>/gi, "\n")
+    .replace(/<\s*\/tr\s*>/gi, "\n")
+    .replace(/<\s*\/t[dh]\s*>/gi, "\t")
+    .replace(/<\s*\/li\s*>/gi, "\n")
+    .replace(/<\s*\/(?:table|thead|tbody|tfoot|div|section|article|blockquote|h[1-6])\s*>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]+$/gm, "")
+    .trim();
 }
 
-function formatInline(value) {
-  const links = [];
-  const protectedLinks = value.replace(markdownLinkPattern, (_match, label, url) => {
-    const token = `%%LINK_${links.length}%%`;
-    links.push(`<a href="${escapeHtml(url)}">${escapeHtml(label)}</a>`);
-    return token;
-  });
+function extractBo82LinkText(htmlMessage) {
+  if (typeof document !== "undefined") {
+    const temp = document.createElement("div");
+    temp.innerHTML = htmlMessage;
 
-  let formatted = autoLink(escapeHtml(protectedLinks))
-    .replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")
-    .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
+    temp.querySelectorAll("a").forEach((link) => {
+      const href = link.getAttribute("href");
+      if (href) {
+        const text = (link.textContent || "").trim();
+        const cleanText = text.replace(/^https?:\/\//, "").replace(/\/$/, "");
+        const cleanHref = href.replace(/^https?:\/\//, "").replace(/\/$/, "");
 
-  links.forEach((link, index) => {
-    formatted = formatted.replace(`%%LINK_${index}%%`, link);
-  });
+        if (cleanText === cleanHref) {
+          link.textContent = text;
+        } else {
+          link.textContent = `${text} - ${href}`;
+        }
+      }
+    });
 
-  return formatted;
-}
-
-function formatLine(line) {
-  const trimmed = line.trimStart();
-
-  if (trimmed.startsWith("- ")) {
-    return `&#8226; ${formatInline(trimmed.slice(2))}`;
+    return temp.innerHTML;
   }
 
-  return formatInline(line);
+  return htmlMessage.replace(
+    /<a\b[^>]*href=(['"])(.*?)\1[^>]*>(.*?)<\/a>/gi,
+    (_, __, href, label) => {
+      const text = label.trim();
+      const cleanText = text.replace(/^https?:\/\//, "").replace(/\/$/, "");
+      const cleanHref = href.replace(/^https?:\/\//, "").replace(/\/$/, "");
+
+      return cleanText === cleanHref ? text : `${text} - ${href}`;
+    },
+  );
 }
 
-function stripPlainFormatting(value) {
-  return value
-    .replace(markdownLinkPattern, "$1 ($2)")
-    .replace(/\*\*([^*\n]+)\*\*/g, "$1")
-    .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1$2");
+export function toSkypebotHtml(htmlMessage) {
+  if (!htmlMessage) {
+    return "";
+  }
+
+  return normalizeWhitespace(htmlMessage)
+    .replace(/<li>\s*<p>/g, "<li>")
+    .replace(/<\/p>\s*<\/li>/g, "</li>")
+    .replace(/<ul>|<ol>|<\/ul>|<\/ol>/g, "")
+    .replace(/<\s*hr\s*\/??\s*>/gi, "———————————————————————————————<br>")
+    .replace(/<p\b[^>]*>/g, "")
+    .replace(/<\/p>/g, "<br>")
+    .replace(/<li>/g, "&#8226; ")
+    .replace(/<\/li>/g, "<br>")
+    .replace(/(<br>)+$/g, "")
+    .trimEnd();
+}
+
+export function toBo82PlainText(htmlMessage) {
+  if (!htmlMessage) {
+    return "";
+  }
+
+  return extractPlainTextFromHtml(extractBo82LinkText(htmlMessage));
 }
 
 export function stripFormatting(message) {
@@ -58,7 +97,7 @@ export function stripFormatting(message) {
     .split("\n")
     .map((line) => line.replace(/^\s*-\s+/, "").replace(/^\s*\d+\.\s+/, ""))
     .join("\n")
-    .replace(markdownLinkPattern, "$1")
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, "$1")
     .replace(/\*\*([^*\n]+)\*\*/g, "$1")
     .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1$2");
 }
@@ -82,32 +121,6 @@ export function insertFormatting(message, selectionStart, selectionEnd, type) {
     return { value: `${before}${next}${after}`, cursor: before.length + next.length };
   }
 
-  const lineStart = message.lastIndexOf("\n", Math.max(0, selectionStart - 1)) + 1;
-  const lineEndIndex = message.indexOf("\n", selectionEnd);
-  const lineEnd = lineEndIndex === -1 ? message.length : lineEndIndex;
-  const target = message.slice(lineStart, lineEnd);
-  const lines = target.split("\n");
-
-  if (type === "bullet") {
-    const next = lines
-      .map((line) => (line.trim() && !line.trimStart().startsWith("- ") ? `- ${line}` : line))
-      .join("\n");
-    return { value: `${message.slice(0, lineStart)}${next}${message.slice(lineEnd)}`, cursor: lineStart + next.length };
-  }
-
-  if (type === "numbered") {
-    const next = lines
-      .map((line, index) => {
-        if (!line.trim()) {
-          return line;
-        }
-
-        return line.replace(/^\s*\d+\.\s+/, "").replace(/^/, `${index + 1}. `);
-      })
-      .join("\n");
-    return { value: `${message.slice(0, lineStart)}${next}${message.slice(lineEnd)}`, cursor: lineStart + next.length };
-  }
-
   return { value: message, cursor: selectionEnd };
 }
 
@@ -118,21 +131,6 @@ export function insertLinkFormatting(message, selectionStart, selectionEnd, labe
   const next = `[${linkLabel}](${url})`;
 
   return { value: `${before}${next}${message.slice(selectionEnd)}`, cursor: before.length + next.length };
-}
-
-export function toSkypebotHtml(message) {
-  return message
-    .split("\n")
-    .map((line) => formatLine(line))
-    .join("<br>");
-}
-
-export function toBo82PlainText(message) {
-  return message
-    .split("\n")
-    .map((line) => stripPlainFormatting(line))
-    .join("\n")
-    .trimEnd();
 }
 
 export function formatDateTime(value) {

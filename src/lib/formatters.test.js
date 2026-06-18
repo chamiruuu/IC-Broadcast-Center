@@ -9,29 +9,62 @@ import {
 } from "./formatters.js";
 
 test("Skypebot HTML preserves line breaks and auto-links URLs", () => {
-  const html = toSkypebotHtml("Hello\nhttps://example.com/path");
+  const html = toSkypebotHtml('<p>Hello</p><p><span style="font-family: Georgia; color: #b42318">Update</span></p>');
 
   assert.equal(
     html,
-    'Hello<br><a href="https://example.com/path">https://example.com/path</a>',
+    'Hello<br><span style="font-family: Georgia; color: #b42318">Update</span>',
   );
 });
 
-test("Skypebot HTML converts formatting marks", () => {
-  const html = toSkypebotHtml("**Important**\n*Note*\n- Item");
+test("Skypebot HTML keeps tables intact", () => {
+  const html = toSkypebotHtml(
+    '<p>Team update</p><table><tr><th>Group</th><th>Status</th></tr><tr><td>A</td><td>Ready</td></tr></table>',
+  );
 
-  assert.equal(html, "<strong>Important</strong><br><em>Note</em><br>&#8226; Item");
+  assert.equal(
+    html,
+    'Team update<br><table><tr><th>Group</th><th>Status</th></tr><tr><td>A</td><td>Ready</td></tr></table>',
+  );
 });
 
-test("Markdown links become anchors for Skypebot and readable text for BO8.2", () => {
-  const message = "Read [policy](https://example.com/policy)";
+test("BO8.2 extracts readable text from tables and formatting", () => {
+  const message =
+    '<p>Team <strong>update</strong></p><table><tr><th>Group</th><th>Status</th></tr><tr><td>A</td><td>Ready</td></tr></table>';
 
-  assert.equal(toSkypebotHtml(message), 'Read <a href="https://example.com/policy">policy</a>');
-  assert.equal(toBo82PlainText(message), "Read policy (https://example.com/policy)");
+  assert.equal(toBo82PlainText(message), "Team update\nGroup\tStatus\nA\tReady");
 });
 
-test("BO8.2 strips visual formatting but keeps text", () => {
-  assert.equal(toBo82PlainText("**Urgent** and *important*"), "Urgent and important");
+test("BO8.2 keeps paragraphs spaced and list items hyphenated", () => {
+  const message = '<p>First paragraph</p><p>Second paragraph</p><ul><li>One</li><li>Two</li></ul>';
+
+  assert.equal(toBo82PlainText(message), "First paragraph\nSecond paragraph\n- One\n- Two");
+});
+
+test("formatters ignore nested paragraphs inside lists", () => {
+  const message = '<p>Intro</p><ul><li><p>One</p></li><li><p>Two</p></li></ul><p>Outro</p>';
+
+  assert.equal(toSkypebotHtml(message), 'Intro<br>&#8226; One<br>&#8226; Two<br>Outro');
+  assert.equal(toBo82PlainText(message), 'Intro\n- One\n- Two\nOutro');
+});
+
+test("formatters keep divider lines intact", () => {
+  const message = '<p>Intro</p><hr><p>Outro</p>';
+
+  assert.equal(toSkypebotHtml(message), 'Intro<br>———————————————————————————————<br>Outro');
+  assert.equal(toBo82PlainText(message), 'Intro\n\n———————————————————————————————\nOutro');
+});
+
+test("BO8.2 expands links into label and URL", () => {
+  const message = '<p>Visit <a href="https://example.com">Example</a></p>';
+
+  assert.equal(toBo82PlainText(message), 'Visit Example - https://example.com');
+});
+
+test("BO8.2 does not duplicate identical URLs", () => {
+  const message = '<p>Visit <a href="https://example.com/">https://example.com</a></p>';
+
+  assert.equal(toBo82PlainText(message), 'Visit https://example.com');
 });
 
 test("insert formatting wraps selected text", () => {
