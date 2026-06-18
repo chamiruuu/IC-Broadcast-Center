@@ -222,7 +222,7 @@ grant usage on schema public to authenticated;
 grant select, update on public.profiles to authenticated;
 grant select, insert, update on public.skypebot_groups to authenticated;
 grant select, insert, update on public.cs_names to authenticated;
-grant select, insert, update on public.announcements to authenticated;
+grant select, insert, update, delete on public.announcements to authenticated;
 grant select on public.completion_logs to authenticated;
 grant select on public.announcement_versions to authenticated;
 
@@ -289,6 +289,11 @@ on public.announcements for update
 to authenticated
 using (public.is_editor())
 with check (public.is_editor());
+
+create policy "announcements editor delete"
+on public.announcements for delete
+to authenticated
+using (public.is_editor());
 
 create policy "completion logs editor select"
 on public.completion_logs for select

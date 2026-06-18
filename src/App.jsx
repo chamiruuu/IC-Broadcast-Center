@@ -395,32 +395,97 @@ function AnnouncementList({
 
 function CompleteButton({ csNames, onComplete }) {
   const [open, setOpen] = useState(false);
-  const [csName, setCsName] = useState("");
+  const [isCompleting, setIsCompleting] = useState(false);
+  
+  // Start with their last used name, or empty if it's their first time
+  const [searchTerm, setSearchTerm] = useState(() => localStorage.getItem("preferredCsName") || "");
 
-  async function handleComplete() {
-    if (!csName) {
-      return;
+  // 1. Check if what they typed matches an official name exactly (ignoring uppercase/lowercase)
+  const exactMatch = csNames.find(
+    (cs) => cs.name.toLowerCase() === searchTerm.trim().toLowerCase()
+  );
+
+  // 2. Filter the clickable suggestions below the input as they type
+  const filteredNames = csNames.filter((cs) =>
+    cs.name.toLowerCase().includes(searchTerm.trim().toLowerCase())
+  );
+
+  async function handleComplete(selectedName) {
+    setIsCompleting(true);
+    localStorage.setItem("preferredCsName", selectedName); // Save for next time
+    await onComplete(selectedName);
+  }
+
+  // Handle when they press "Enter" in the text box
+  function handleSubmit(event) {
+    event.preventDefault();
+    if (exactMatch) {
+      handleComplete(exactMatch.name);
     }
-
-    await onComplete(csName);
-    setOpen(false);
-    setCsName("");
   }
 
   return (
     <div className="complete-box">
-      {!open ? (
-        <button className="primary small" onClick={() => setOpen(true)}>Mark completed</button>
-      ) : (
-        <>
-          <select value={csName} onChange={(event) => setCsName(event.target.value)}>
-            <option value="">Select CS name</option>
-            {csNames.map((item) => (
-              <option key={item.id} value={item.name}>{item.name}</option>
-            ))}
-          </select>
-          <button className="primary small" onClick={handleComplete}>Confirm</button>
-        </>
+      <button
+        className="primary small"
+        onClick={() => setOpen(true)}
+        disabled={isCompleting}
+      >
+        {isCompleting ? "Completing..." : "Mark completed"}
+      </button>
+
+      {open && !isCompleting && (
+        <Modal
+          title="Who is completing this?"
+          eyebrow="Confirm action"
+          onClose={() => setOpen(false)}
+        >
+          <form className="modal-form" onSubmit={handleSubmit}>
+            <label>
+              Type your official CS Name
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                autoFocus
+              />
+            </label>
+
+            {/* If they type a wrong name, tell them immediately */}
+            {filteredNames.length === 0 && (
+              <p style={{ color: "#dc2626", fontSize: "13px", marginTop: "4px" }}>
+                Name not found. Must match an admin-approved name.
+              </p>
+            )}
+
+            {/* Show matching names as clickable chips */}
+            {filteredNames.length > 0 && (
+              <div className="cs-name-grid" style={{ marginTop: "12px", maxHeight: "150px" }}>
+                {filteredNames.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={`chip ${exactMatch?.name === item.name ? "selected" : ""}`}
+                    onClick={() => handleComplete(item.name)}
+                  >
+                    {item.name}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="action-row" style={{ marginTop: "24px" }}>
+              <button type="button" onClick={() => setOpen(false)}>Cancel</button>
+              <button
+                type="submit"
+                className="primary"
+                disabled={!exactMatch} // Locks the button if there is no exact match
+              >
+                Confirm
+              </button>
+            </div>
+          </form>
+        </Modal>
       )}
     </div>
   );
@@ -486,12 +551,20 @@ function AnnouncementDetail({ announcement, groups, profiles, versions, completi
 
           <div className="history-block">
             <h4>Version History</h4>
-            {relatedVersions.length ? relatedVersions.map((item) => (
-              <div className="history-item" key={item.id}>
-                <strong>{item.change_type.replace("_", " ")}</strong>
-                <span>{statusLabel(item.status)} by {profileMap.get(item.changed_by)?.name || "-"} at {formatDateTime(item.changed_at)}</span>
-              </div>
-            )) : <p>No version history yet.</p>}
+            {relatedVersions.length ? relatedVersions.map((item) => {
+              const isCompletionLog = ["status changed", "status_changed"].includes(item.change_type)
+                && statusLabel(item.status)?.includes("Completed");
+              const displayName = isCompletionLog
+                ? announcement.completed_by_name || profileMap.get(item.changed_by)?.name
+                : profileMap.get(item.changed_by)?.name;
+
+              return (
+                <div className="history-item" key={item.id}>
+                  <strong>{item.change_type.replace("_", " ")}</strong>
+                  <span>{statusLabel(item.status) || item.change_type} by {displayName || "-"} at {formatDateTime(item.changed_at)}</span>
+                </div>
+              );
+            }) : <p>No version history yet.</p>}
           </div>
         </aside>
       </div>
@@ -499,7 +572,7 @@ function AnnouncementDetail({ announcement, groups, profiles, versions, completi
   );
 }
 
-function Editor({ editor, setEditor, groups, onSave, saving }) {
+function Editor({ editor, setEditor, groups, onSave, onDelete, saving }) {
   const [linkDialog, setLinkDialog] = useState(null);
   const [previewModal, setPreviewModal] = useState(null);
   const [confirmPublish, setConfirmPublish] = useState(false);
@@ -508,7 +581,9 @@ function Editor({ editor, setEditor, groups, onSave, saving }) {
 
   const tiptapEditor = useEditor({
     extensions: [
-      StarterKit,
+      StarterKit.configure({
+        link: false,
+      }),
       Link.configure({ openOnClick: false }),
       TextStyle,
       Color,
@@ -661,6 +736,18 @@ function Editor({ editor, setEditor, groups, onSave, saving }) {
               ))}
             </div>
           </div>
+
+          {editor.id ? (
+            <div style={{ marginTop: "24px", paddingTop: "16px", borderTop: "1px solid #fee2e2" }}>
+              <button
+                type="button"
+                onClick={() => onDelete(editor.id)}
+                style={{ color: "#dc2626", background: "transparent", border: "none", cursor: "pointer", fontWeight: "600" }}
+              >
+                Delete this broadcast
+              </button>
+            </div>
+          ) : null}
 
         </form>
 
@@ -979,6 +1066,38 @@ function UserAdmin({ profiles, reload }) {
   );
 }
 
+// The new, modern auto-dismissing toast component
+function ModernToast({ message, type = "success", onClose }) {
+  useEffect(() => {
+    // 1. Play the sound when the toast appears
+    const audio = new Audio('/notification.mp3');
+    audio.volume = 0.5; // Keep it subtle, not too loud
+    audio.play().catch((e) => console.log("Browser blocked auto-play sound:", e));
+
+    // 2. Auto-dismiss after 3.5 seconds
+    const timer = setTimeout(() => {
+      onClose();
+    }, 3500);
+
+    return () => clearTimeout(timer);
+  }, [onClose]);
+
+  return (
+    <div className={`modern-toast ${type}`}>
+      <div className="toast-icon">
+        {type === "success" ? "✨" : "⚠️"}
+      </div>
+      <div className="toast-content">
+        <h4>{type === "success" ? "Success" : "Notice"}</h4>
+        <p>{message}</p>
+      </div>
+      <button className="toast-close" onClick={onClose}>×</button>
+      {/* The shrinking progress bar */}
+      <div className="toast-progress"></div>
+    </div>
+  );
+}
+
 export default function App() {
   const isResetPath = window.location.pathname === "/reset-password";
   const sessionUserIdRef = useRef(null);
@@ -1201,6 +1320,28 @@ export default function App() {
     }
   }
 
+  async function handleDelete(id) {
+    if (!window.confirm("Are you sure you want to permanently delete this broadcast? This cannot be undone.")) {
+      return;
+    }
+
+    try {
+      const { error } = await supabase.from("announcements").delete().eq("id", id);
+      if (error) {
+        throw error;
+      }
+
+      setAnnouncements((current) => current.filter((announcement) => announcement.id !== id));
+      setEditor(emptyEditor);
+      setTab("active");
+      setToast("Broadcast deleted successfully.");
+      await reloadAll();
+    } catch (error) {
+      console.error("Error deleting:", error);
+      setToast(error?.message || "Failed to delete broadcast.");
+    }
+  }
+
   async function handlePublish(announcement) {
     const { error } = await supabase
       .from("announcements")
@@ -1273,9 +1414,14 @@ export default function App() {
       setTab={setTab}
       onSignOut={() => supabase.auth.signOut()}
     >
-      {toast ? (
-        <button className="toast" onClick={() => setToast("")}>{toast}</button>
-      ) : null}
+      {/* NEW MODERN TOAST RENDERER */}
+      {toast && (
+        <ModernToast 
+          message={toast} 
+          type="success" // You can dynamically change this if you have error toasts!
+          onClose={() => setToast(null)} 
+        />
+      )}
 
       {tab === "active" ? (
         <AnnouncementList
@@ -1337,6 +1483,7 @@ export default function App() {
           setEditor={setEditor}
           groups={groups.filter((item) => item.active)}
           onSave={handleSave}
+          onDelete={handleDelete}
           onCancel={() => {
             setEditor(emptyEditor);
             setTab("active");
